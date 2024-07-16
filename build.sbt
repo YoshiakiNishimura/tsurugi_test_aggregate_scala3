@@ -1,5 +1,5 @@
 val scala3Version = "3.4.2"
-
+val tsurugiVersion = "1.3.0"
 lazy val root = project
   .in(file("."))
   .settings(
@@ -8,10 +8,10 @@ lazy val root = project
     scalaVersion := scala3Version,
     libraryDependencies ++= Seq(
       "org.scalameta" %% "munit" % "1.0.0" % Test,
-      "com.tsurugidb.tsubakuro" % "tsubakuro-session" % "1.3.0",
-      "com.tsurugidb.tsubakuro" % "tsubakuro-connector" % "1.3.0",
-      "com.tsurugidb.tsubakuro" % "tsubakuro-kvs" % "1.3.0",
-      "com.tsurugidb.iceaxe" % "iceaxe-core" % "1.3.0",
+      "com.tsurugidb.tsubakuro" % "tsubakuro-session" % tsurugiVersion,
+      "com.tsurugidb.tsubakuro" % "tsubakuro-connector" % tsurugiVersion,
+      "com.tsurugidb.tsubakuro" % "tsubakuro-kvs" %  tsurugiVersion,
+      "com.tsurugidb.iceaxe" % "iceaxe-core" %  tsurugiVersion,
       "org.slf4j" % "slf4j-simple" % "1.7.32"
     )
   )
