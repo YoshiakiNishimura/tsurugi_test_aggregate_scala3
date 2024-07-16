@@ -20,13 +20,14 @@ import com.tsurugidb.tsubakuro.sql.{SqlClient, Transaction}
 import com.tsurugidb.tsubakuro.kvs.{KvsClient, RecordBuffer, TransactionHandle}
 
 import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent.{Future, ExecutionContext}
+import scala.concurrent.{ExecutionContext}
 import scala.jdk.CollectionConverters._
 import scala.util.{Using, Try, Success, Failure}
 import java.net.URI
-
+// private val Connect ="tcp://localhost:12345"
+private val Connect = "ipc://tsurugi"
 private val TableName = "test_table"
-private val ColumnCount = 1_000_000
+private val ColumnList = List(1_000, 2_000, 3_000)
 class Setting(val tg: TgTmSetting, val name: String) {
   def getName: String = name
   def getTgTmSetting: TgTmSetting = tg
@@ -54,17 +55,18 @@ class Table(
 def insert(kvs: KvsClient, table: Table)(implicit
     ec: ExecutionContext
 ): Unit = {
-  println(s"insert ${table.getTableName}")
-  val insertFutures = (0 until table.columnCount).map { i =>
-    Future {
-      val tx = kvs.beginTransaction().await
+  println(s"insert ${table.getTableName} column ${table.getColumnCount}")
+  Try {
+    val tx = kvs.beginTransaction().await
+    (0 until table.getColumnCount).foreach { i =>
       val record = table.createRecordBuffer(i)
-      kvs.put(tx, table.tableName, record).await
-      kvs.commit(tx).await
-      tx.close()
+      kvs.put(tx, table.getTableName, record).await
     }
+    kvs.commit(tx).await
+    tx.close()
+  } recover { case e: Exception =>
+    println(e.getMessage)
   }
-  Future.sequence(insertFutures).map(_ => ())
 }
 
 def dropCreate(sql: SqlClient, t: Table)(implicit
@@ -73,43 +75,36 @@ def dropCreate(sql: SqlClient, t: Table)(implicit
   val drop = s"DROP TABLE ${t.getTableName}"
   val create = s"CREATE TABLE ${t.getTableName} ${t.getFormat}"
 
-  println(s"drop ${t.getTableName}")
-  val dropFuture = Future {
+  println(s"${drop}")
+  Try {
     val transaction = sql.createTransaction().await
     transaction.executeStatement(drop).await
     transaction.commit().await
     transaction.close()
-  }
-  dropFuture.recover { case e: Exception =>
+  } recover { case e: Exception =>
     println(e.getMessage)
   }
-  println(s"create ${t.getTableName}")
-  val createFuture = Future {
+
+  println(s"${create}")
+  Try {
     val transaction = sql.createTransaction().await
     transaction.executeStatement(create).await
     transaction.commit().await
     transaction.close()
-  }
-  createFuture.recover { case e: Exception =>
+  } recover { case e: Exception =>
     println(e.getMessage)
   }
 }
 
-def sqlExecute(session: Session, sql: SqlClient, kvs: KvsClient): Unit = {
-  val list = List(
-    new Table(
-      TableName,
-      "(id int primary key, name int, note int)",
-      3,
-      ColumnCount
-    )
-  )
-
+def sqlExecute(
+    session: Session,
+    sql: SqlClient,
+    kvs: KvsClient,
+    table: Table
+): Unit = {
   val createAndInsertTime = System.nanoTime()
-  list.foreach { table =>
-    dropCreate(sql, table)
-    insert(kvs, table)
-  }
+  dropCreate(sql, table)
+  insert(kvs, table)
   val createAndInsertEndTime = System.nanoTime()
   println(
     s"createAndInsert ${(createAndInsertEndTime - createAndInsertTime) / 1_000_000} ms"
@@ -149,26 +144,34 @@ def using[T <: AutoCloseable, R](resource: T)(f: T => R): R =
 
 @main def run(): Unit = {
   println("start")
-  val endpoint = URI.create("tcp://localhost:12345")
+  val endpoint = URI.create(Connect)
   val connector = TsurugiConnector.of(endpoint)
-  Using.Manager { use =>
-    implicit val ec: ExecutionContext = ExecutionContext.global
-    val session = use(SessionBuilder.connect(endpoint).create())
-    val sql = use(SqlClient.attach(session))
-    val kvs = use(KvsClient.attach(session))
+  ColumnList.foreach { columncount =>
+    val table = new Table(
+      TableName,
+      "(id int primary key, name int, note int)",
+      3,
+      columncount
+    )
+    Using.Manager { use =>
+      implicit val ec: ExecutionContext = ExecutionContext.global
+      val session = use(SessionBuilder.connect(endpoint).create())
+      val sql = use(SqlClient.attach(session))
+      val kvs = use(KvsClient.attach(session))
 
-    sqlExecute(session, sql, kvs)
-  } match {
-    case Success(_)         =>
-    case Failure(exception) => println(s"error : ${exception.getMessage}")
-  }
-  val list =
-    new Setting(TgTmSetting.ofAlways(TgTxOption.ofRTX()), "RTX") ::
-      new Setting(TgTmSetting.ofAlways(TgTxOption.ofOCC()), "OCC") ::
-      new Setting(TgTmSetting.ofAlways(TgTxOption.ofLTX()), "LTX") :: Nil
-  using(connector.createSession()) { session =>
-    list.foreach { setting =>
-      executeSelect(session, setting)
+      sqlExecute(session, sql, kvs, table)
+    } match {
+      case Success(_)         =>
+      case Failure(exception) => println(s"error : ${exception.getMessage}")
+    }
+    val list =
+      new Setting(TgTmSetting.ofAlways(TgTxOption.ofRTX()), "RTX") ::
+        new Setting(TgTmSetting.ofAlways(TgTxOption.ofOCC()), "OCC") ::
+        new Setting(TgTmSetting.ofAlways(TgTxOption.ofLTX()), "LTX") :: Nil
+    using(connector.createSession()) { session =>
+      list.foreach { setting =>
+        executeSelect(session, setting)
+      }
     }
   }
 }
